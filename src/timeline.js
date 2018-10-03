@@ -3,7 +3,7 @@
 import React from 'react';
 import PropTypes from 'prop-types';
 import ReactDOM from 'react-dom';
-import {Grid, AutoSizer, defaultCellRangeRenderer} from 'react-virtualized';
+import {AutoSizer, defaultCellRangeRenderer} from 'react-virtualized';
 
 import moment from 'moment';
 import interact from 'interactjs';
@@ -15,6 +15,7 @@ import {timeSnap, getTimeAtPixel, getPixelAtTime, getSnapPixelFromDelta, pixelsP
 import Timebar from './components/timebar';
 import SelectBox from './components/selector';
 import {DefaultGroupRenderer, DefaultItemRenderer} from './components/renderers';
+import Grid from './components/timeGrid';
 
 // startsWith polyfill for IE11 support
 import 'core-js/fn/string/starts-with';
@@ -107,6 +108,7 @@ export default class Timeline extends React.Component {
   constructor(props) {
     super(props);
     this.selecting = false;
+    this.cellCache = {};
     this.state = {selection: [], cursorTime: null};
     this.setTimeMap(this.props.items);
 
@@ -623,49 +625,58 @@ export default class Timeline extends React.Component {
     const {timelineMode, onItemHover, onItemLeave} = this.props;
     const canSelect = Timeline.isBitSet(Timeline.TIMELINE_MODES.SELECT, timelineMode);
     return ({columnIndex, key, parent, rowIndex, style}) => {
-      let itemCol = 1;
-      if (itemCol == columnIndex) {
-        let itemsInRow = this.rowItemMap[rowIndex];
-        return (
-          <div
-            key={key}
-            style={style}
-            data-row-index={rowIndex}
-            className="rct9k-row"
-            onClick={e => this._handleItemRowEvent(e, Timeline.no_op, this.props.onRowClick)}
-            onMouseDown={e => (this.selecting = false)}
-            onMouseMove={e => (this.selecting = true)}
-            onMouseOver={e => {
-              this.selecting = false;
-              return this._handleItemRowEvent(e, onItemHover, null);
-            }}
-            onMouseLeave={e => {
-              this.selecting = false;
-              return this._handleItemRowEvent(e, onItemLeave, null);
-            }}
-            onContextMenu={e =>
-              this._handleItemRowEvent(e, this.props.onItemContextClick, this.props.onRowContextClick)
-            }
-            onDoubleClick={e => this._handleItemRowEvent(e, this.props.onItemDoubleClick, this.props.onRowDoubleClick)}>
-            {rowItemsRenderer(
-              itemsInRow,
-              this.props.startDate,
-              this.props.endDate,
-              width,
-              this.props.itemHeight,
-              this.props.itemRenderer,
-              canSelect ? this.props.selectedItems : []
-            )}
-          </div>
-        );
+      if (this.cellCache.hasOwnProperty(key) && this.selecting) {
+        return this.cellCache[key];
       } else {
-        const GroupComp = this.props.groupRenderer;
-        let group = _.find(this.props.groups, g => g.id == rowIndex);
-        return (
-          <div data-row-index={rowIndex} key={key} style={style} className="rct9k-group">
-            <GroupComp group={group} />
-          </div>
-        );
+        let cell = null;
+        let itemCol = 1;
+        if (itemCol == columnIndex) {
+          let itemsInRow = this.rowItemMap[rowIndex];
+          cell = (
+            <div
+              key={key}
+              style={style}
+              data-row-index={rowIndex}
+              className="rct9k-row"
+              onClick={e => this._handleItemRowEvent(e, Timeline.no_op, this.props.onRowClick)}
+              onMouseDown={e => (this.selecting = false)}
+              onMouseMove={e => (this.selecting = true)}
+              onMouseOver={e => {
+                this.selecting = false;
+                return this._handleItemRowEvent(e, onItemHover, null);
+              }}
+              onMouseLeave={e => {
+                this.selecting = false;
+                return this._handleItemRowEvent(e, onItemLeave, null);
+              }}
+              onContextMenu={e =>
+                this._handleItemRowEvent(e, this.props.onItemContextClick, this.props.onRowContextClick)
+              }
+              onDoubleClick={e =>
+                this._handleItemRowEvent(e, this.props.onItemDoubleClick, this.props.onRowDoubleClick)
+              }>
+              {rowItemsRenderer(
+                itemsInRow,
+                this.props.startDate,
+                this.props.endDate,
+                width,
+                this.props.itemHeight,
+                this.props.itemRenderer,
+                canSelect ? this.props.selectedItems : []
+              )}
+            </div>
+          );
+        } else {
+          const GroupComp = this.props.groupRenderer;
+          let group = _.find(this.props.groups, g => g.id == rowIndex);
+          cell = (
+            <div data-row-index={rowIndex} key={key} style={style} className="rct9k-group">
+              <GroupComp group={group} />
+            </div>
+          );
+        }
+        this.cellCache[key] = cell;
+        return cell;
       }
     };
   }
@@ -713,8 +724,10 @@ export default class Timeline extends React.Component {
    * @param {Object} reactComponent Grid react element
    */
   grid_ref_callback(reactComponent) {
-    this._grid = reactComponent;
-    this._gridDomNode = ReactDOM.findDOMNode(this._grid);
+    if (reactComponent) {
+      this._grid = reactComponent.gridRef.current;
+      this._gridDomNode = ReactDOM.findDOMNode(this._grid);
+    }
   }
 
   /**
@@ -754,7 +767,7 @@ export default class Timeline extends React.Component {
   }
 
   render() {
-    const {onInteraction, groupOffset, timebarFormat, componentId, groupTitleRenderer} = this.props;
+    const {onInteraction, groupOffset, timebarFormat, componentId, groupTitleRenderer, groups} = this.props;
 
     const divCssClass = `rct9k-timeline-div rct9k-id-${componentId}`;
     let varTimebarProps = {};
@@ -785,15 +798,14 @@ export default class Timeline extends React.Component {
               />
               <Grid
                 ref={this.grid_ref_callback}
-                autoContainerWidth
                 cellRenderer={this.cellRenderer(this.getTimelineWidth(width))}
                 cellRangeRenderer={this.cellRangeRenderer}
-                columnCount={2}
+                gridWidth={width}
+                gridHeight={height}
                 columnWidth={columnWidth(width)}
-                height={height}
-                rowCount={this.props.groups.length}
                 rowHeight={this.rowHeight}
-                width={width}
+                rowCount={groups.length}
+                disableUpdate={this.selecting}
               />
             </div>
           )}
